@@ -17,5 +17,5 @@ meson setup "$BUILDDIR" --buildtype=release --strip -Db_lto=true \
 cd "$BUILDDIR"
 ninja
 
-echo "[scrcpy] Installing (sudo)..."
-sudo ninja install
+# echo "[scrcpy] Installing (sudo)..."
+# sudo ninja install
