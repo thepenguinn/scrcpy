@@ -12,6 +12,10 @@
 #include "util/process_intr.h"
 #include "util/str.h"
 
+// Testing
+
+#include "shizuku/shizuku.h"
+
 /* Convenience macro to expand:
  *
  *     const char *const argv[] =
@@ -171,6 +175,16 @@ process_check_success_intr(struct sc_intr *intr, sc_pid pid, const char *name,
 
 static sc_pid
 sc_adb_execute_p(const char *const argv[], unsigned flags, sc_pipe *pout) {
+
+    const char *const *args = argv;
+
+    printf("---------------\n");
+    while (*args) {
+        printf("%s\n", *args);
+        args++;
+    }
+    printf("---------------\n");
+
     unsigned process_flags = 0;
     if (flags & SC_ADB_NO_STDOUT) {
         process_flags |= SC_PROCESS_NO_STDOUT;

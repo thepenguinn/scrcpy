@@ -1,9 +1,11 @@
 src = [
     'src/main.c',
+    'src/shizuku/shizuku.c',
     'src/adb/adb.c',
     'src/adb/adb_device.c',
     'src/adb/adb_parser.c',
     'src/adb/adb_tunnel.c',
+    'src/shizuku/shizuku_tunnel.c',
     'src/audio_player.c',
     'src/cli.c',
     'src/clock.c',

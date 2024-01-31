@@ -112,8 +112,9 @@ error:
 }
 
 static bool
-push_server(struct sc_intr *intr, const char *serial) {
+push_server(struct sc_intr *intr, const char *serial, bool use_shizuku) {
     char *server_path = get_server_path();
+    bool ok;
     if (!server_path) {
         return false;
     }
@@ -122,7 +123,12 @@ push_server(struct sc_intr *intr, const char *serial) {
         free(server_path);
         return false;
     }
-    bool ok = sc_adb_push(intr, serial, server_path, SC_DEVICE_SERVER_PATH, 0);
+    if (use_shizuku) {
+        ok = sc_shizuku_push(intr, server_path, SC_DEVICE_SERVER_PATH);
+    } else {
+        ok = sc_adb_push(intr, serial,
+                              server_path, SC_DEVICE_SERVER_PATH, 0);
+    }
     free(server_path);
     return ok;
 }
@@ -190,11 +196,18 @@ execute_server(struct sc_server *server,
 
     const char *cmd[128];
     unsigned count = 0;
-    cmd[count++] = sc_adb_get_executable();
-    cmd[count++] = "-s";
-    cmd[count++] = serial;
-    cmd[count++] = "shell";
-    cmd[count++] = "CLASSPATH=" SC_DEVICE_SERVER_PATH;
+    if (params->use_shizuku) {
+        // TODO: implement sc_shizuku_get_executable
+        cmd[count++] = "rish";
+        cmd[count++] = "/data/local/tmp/scrcpy_start";
+    } else {
+        cmd[count++] = sc_adb_get_executable();
+        cmd[count++] = "-s";
+        cmd[count++] = serial;
+        cmd[count++] = "shell";
+        cmd[count++] = "CLASSPATH=" SC_DEVICE_SERVER_PATH;
+    }
+    // TODO: fix this ahhah
     cmd[count++] = "app_process";
 
 #ifdef SERVER_DEBUGGER
@@ -332,8 +345,12 @@ execute_server(struct sc_server *server,
     //     Port: 5005
     // Then click on "Debug"
 #endif
-    // Inherit both stdout and stderr (all server logs are printed to stdout)
-    pid = sc_adb_execute(cmd, 0);
+    if (params->use_shizuku) {
+        pid = sc_shizuku_execute(cmd);
+    } else {
+        // Inherit both stdout and stderr (all server logs are printed to stdout)
+        pid = sc_adb_execute(cmd, 0);
+    }
 
 end:
     for (unsigned i = dyn_idx; i < count; ++i) {
@@ -463,7 +480,92 @@ device_read_info(struct sc_intr *intr, sc_socket device_socket,
 }
 
 static bool
+sc_server_shizuku_connect_to(struct sc_server *server,
+                             struct sc_server_info *info) {
+
+
+    struct sc_adb_tunnel *tunnel = &server->tunnel;
+
+    bool video = server->params.video;
+    bool audio = server->params.audio;
+    bool control = server->params.control;
+
+    sc_socket video_socket = SC_SOCKET_NONE;
+    sc_socket audio_socket = SC_SOCKET_NONE;
+    sc_socket control_socket = SC_SOCKET_NONE;
+
+    if (video) {
+        video_socket =
+            net_shizuku_accept_intr(&server->intr, tunnel->server_socket);
+        if (video_socket == SC_SOCKET_NONE) {
+            goto fail;
+        }
+    }
+
+    if (audio) {
+        audio_socket =
+            net_shizuku_accept_intr(&server->intr, tunnel->server_socket);
+        if (audio_socket == SC_SOCKET_NONE) {
+            goto fail;
+        }
+    }
+
+    if (control) {
+        control_socket =
+            net_shizuku_accept_intr(&server->intr, tunnel->server_socket);
+        if (control_socket == SC_SOCKET_NONE) {
+            goto fail;
+        }
+    }
+
+    sc_socket first_socket = video ? video_socket
+                           : audio ? audio_socket
+                                   : control_socket;
+
+    // The sockets will be closed on stop if device_read_info() fails
+    bool ok = device_read_info(&server->intr, first_socket, info);
+    if (!ok) {
+        goto fail;
+    }
+
+    assert(!video || video_socket != SC_SOCKET_NONE);
+    assert(!audio || audio_socket != SC_SOCKET_NONE);
+    assert(!control || control_socket != SC_SOCKET_NONE);
+
+    server->video_socket = video_socket;
+    server->audio_socket = audio_socket;
+    server->control_socket = control_socket;
+
+    return true;
+
+fail:
+
+    if (video_socket != SC_SOCKET_NONE) {
+        if (!net_close(video_socket)) {
+            LOGW("Could not close video socket");
+        }
+    }
+
+    if (audio_socket != SC_SOCKET_NONE) {
+        if (!net_close(audio_socket)) {
+            LOGW("Could not close audio socket");
+        }
+    }
+
+    if (control_socket != SC_SOCKET_NONE) {
+        if (!net_close(control_socket)) {
+            LOGW("Could not close control socket");
+        }
+    }
+
+    return false;
+
+}
+
+
+static bool
 sc_server_connect_to(struct sc_server *server, struct sc_server_info *info) {
+
     struct sc_adb_tunnel *tunnel = &server->tunnel;
 
     assert(tunnel->enabled);
@@ -558,7 +660,6 @@ sc_server_connect_to(struct sc_server *server, struct sc_server_info *info) {
         }
     }
 
-    // we don't need the adb tunnel anymore
     sc_adb_tunnel_close(tunnel, &server->intr, serial,
                         server->device_socket_name);
 
@@ -808,11 +909,46 @@ run_server(void *data) {
     struct sc_server *server = data;
 
     const struct sc_server_params *params = &server->params;
+    sc_pid pid; // for execute_server()
+    bool ok;
+
+    if (params->use_shizuku) {
+        // shizuku_testing();
+        // printf("Testing shizuku\n");
+
+        ok = push_server(&server->intr, NULL, true);
+        if (!ok) {
+            goto error_connection_failed;
+        }
+
+        int r = asprintf(&server->device_socket_name, SC_SOCKET_NAME_PREFIX "%08x",
+                         params->scid);
+        if (r == -1) {
+            LOG_OOM();
+            goto error_connection_failed;
+        }
+
+        pid = execute_server(server, params);
+
+        if (pid == SC_PROCESS_NONE) {
+            goto error_connection_failed;
+        }
+
+        ok = sc_shizuku_tunnel_open(&server->tunnel, &server->intr,
+                                    server->device_socket_name);
+
+        if (!ok) {
+            goto error_connection_failed;
+        }
+
+        printf("server pushed and executed\n");
+        goto server_pushed_and_executed;
+    }
 
     // Execute "adb start-server" before "adb devices" so that daemon starting
     // output/errors is correctly printed in the console ("adb devices" output
     // is parsed, so it is not output)
-    bool ok = sc_adb_start_server(&server->intr, 0);
+    ok = sc_adb_start_server(&server->intr, 0);
     if (!ok) {
         LOGE("Could not start adb server");
         goto error_connection_failed;
@@ -888,7 +1024,7 @@ run_server(void *data) {
     assert(serial);
     LOGD("Device serial: %s", serial);
 
-    ok = push_server(&server->intr, serial);
+    ok = push_server(&server->intr, serial, false);
     if (!ok) {
         goto error_connection_failed;
     }
@@ -896,7 +1032,7 @@ run_server(void *data) {
     // If --list-* is passed, then the server just prints the requested data
     // then exits.
     if (params->list_encoders || params->list_displays) {
-        sc_pid pid = execute_server(server, params);
+        pid = execute_server(server, params);
         if (pid == SC_PROCESS_NONE) {
             goto error_connection_failed;
         }
@@ -924,12 +1060,14 @@ run_server(void *data) {
     }
 
     // server will connect to our server socket
-    sc_pid pid = execute_server(server, params);
+    pid = execute_server(server, params);
     if (pid == SC_PROCESS_NONE) {
         sc_adb_tunnel_close(&server->tunnel, &server->intr, serial,
                             server->device_socket_name);
         goto error_connection_failed;
     }
+
+server_pushed_and_executed:
 
     static const struct sc_process_listener listener = {
         .on_terminated = sc_server_on_terminated,
@@ -939,13 +1077,21 @@ run_server(void *data) {
     if (!ok) {
         sc_process_terminate(pid);
         sc_process_wait(pid, true); // ignore exit code
-        sc_adb_tunnel_close(&server->tunnel, &server->intr, serial,
-                            server->device_socket_name);
+        if (!params->use_shizuku) {
+            sc_adb_tunnel_close(&server->tunnel, &server->intr, serial,
+                                server->device_socket_name);
+        }
         goto error_connection_failed;
+        printf("couldn't init observer\n");
     }
 
-    ok = sc_server_connect_to(server, &server->info);
-    // The tunnel is always closed by server_connect_to()
+    if (params->use_shizuku) {
+        ok = sc_server_shizuku_connect_to(server, &server->info);
+    } else {
+        ok = sc_server_connect_to(server, &server->info);
+        // The tunnel is always closed by server_connect_to()
+    }
+
     if (!ok) {
         sc_process_terminate(pid);
         sc_process_wait(pid, true); // ignore exit code
@@ -1002,7 +1148,9 @@ run_server(void *data) {
 
     sc_process_close(pid);
 
-    sc_server_kill_adb_if_requested(server);
+    if (!params->use_shizuku) {
+        sc_server_kill_adb_if_requested(server);
+    }
 
     return 0;
 

@@ -82,4 +82,5 @@ const struct scrcpy_options scrcpy_options_default = {
     .list_encoders = false,
     .list_displays = false,
     .kill_adb_on_close = false,
+	.use_shizuku = false,
 };

@@ -182,6 +182,7 @@ struct scrcpy_options {
     bool list_encoders;
     bool list_displays;
     bool kill_adb_on_close;
+	bool use_shizuku;
 };
 
 extern const struct scrcpy_options scrcpy_options_default;

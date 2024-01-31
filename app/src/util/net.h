@@ -33,13 +33,22 @@ void
 net_cleanup(void);
 
 sc_socket
+net_socket_un(void);
+
+sc_socket
 net_socket(void);
 
 bool
 net_connect(sc_socket socket, uint32_t addr, uint16_t port);
 
 bool
+net_listen_un(sc_socket server_socket, const char *abstractname, int backlog);
+
+bool
 net_listen(sc_socket server_socket, uint32_t addr, uint16_t port, int backlog);
+
+sc_socket
+net_accept_un(sc_socket server_socket);
 
 sc_socket
 net_accept(sc_socket server_socket);

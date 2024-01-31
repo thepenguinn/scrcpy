@@ -201,6 +201,7 @@ await_for_server(bool *connected) {
                 }
                 return true;
             case SC_EVENT_SERVER_CONNECTION_FAILED:
+                printf("That's where it failed\n");
                 return false;
             case SC_EVENT_SERVER_CONNECTED:
                 if (connected) {
@@ -296,6 +297,10 @@ sc_timeout_on_timeout(struct sc_timeout *timeout, void *userdata) {
 // Generate a scrcpy id to differentiate multiple running scrcpy instances
 static uint32_t
 scrcpy_generate_scid() {
+
+    // TESTING
+    return 12U & 0x7FFFFFFF;
+
     struct sc_rand rand;
     sc_rand_init(&rand);
     // Only use 31 bits to avoid issues with signed values on the Java-side
@@ -380,6 +385,7 @@ scrcpy(struct scrcpy_options *options) {
         .list_encoders = options->list_encoders,
         .list_displays = options->list_displays,
         .kill_adb_on_close = options->kill_adb_on_close,
+		.use_shizuku = options->use_shizuku,
     };
 
     static const struct sc_server_callbacks cbs = {

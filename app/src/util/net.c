@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "log.h"
 
@@ -14,11 +15,14 @@
 #else
 # include <sys/types.h>
 # include <sys/socket.h>
+# include <sys/un.h>
+# include <netdb.h>
 # include <netinet/in.h>
 # include <arpa/inet.h>
 # include <unistd.h>
 # include <fcntl.h>
 # define SOCKET_ERROR -1
+  typedef struct sockaddr_un SOCKADDR_UN;
   typedef struct sockaddr_in SOCKADDR_IN;
   typedef struct sockaddr SOCKADDR;
   typedef struct in_addr IN_ADDR;
@@ -123,6 +127,27 @@ net_perror(const char *s) {
 }
 
 sc_socket
+net_socket_un() {
+#ifdef HAVE_SOCK_CLOEXEC
+    sc_raw_socket raw_sock = socket(AF_LOCAL, SOCK_STREAM | SOCK_CLOEXEC, 0);
+#else
+    sc_raw_socket raw_sock = socket(AF_LOCAL, SOCK_STREAM, 0);
+    if (raw_sock != SC_RAW_SOCKET_NONE && !set_cloexec_flag(raw_sock)) {
+        sc_raw_socket_close(raw_sock);
+        return SC_SOCKET_NONE;
+    }
+#endif
+
+    // probably don't need this because we'ill always be on a unix
+    // environment (android) while executing this.
+    sc_socket sock = wrap(raw_sock);
+    if (sock == SC_SOCKET_NONE) {
+        net_perror("socket");
+    }
+    return sock;
+}
+
+sc_socket
 net_socket(void) {
 #ifdef HAVE_SOCK_CLOEXEC
     sc_raw_socket raw_sock = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -159,8 +184,47 @@ net_connect(sc_socket socket, uint32_t addr, uint16_t port) {
 }
 
 bool
+net_listen_un(sc_socket server_socket, const char *abstractname, int backlog) {
+    sc_raw_socket raw_sock = unwrap(server_socket);
+
+    int reuse = 1;
+
+    if (setsockopt(raw_sock, SOL_SOCKET, SO_REUSEADDR, (const void *) &reuse,
+                   sizeof(reuse)) == -1) {
+        net_perror("[shizuku] setsockopt(SO_REUSEADDR)");
+    }
+
+    SOCKADDR_UN sun;
+    socklen_t slen;
+
+    memset(&sun, 0, sizeof(sun));
+
+    sun.sun_family = AF_LOCAL;
+    sun.sun_path[0] = 0;
+
+    memcpy(sun.sun_path + 1, abstractname, strlen(abstractname));
+
+    slen = strlen(abstractname) + offsetof(SOCKADDR_UN, sun_path) + 1;
+
+    if (bind(server_socket, (SOCKADDR *) &sun, slen) == -1) {
+        net_perror("bind");
+        return false;
+    }
+
+    if (listen(server_socket, backlog) == -1) {
+        net_perror("listen");
+        return false;
+    }
+
+    return true;
+
+}
+
+bool
 net_listen(sc_socket server_socket, uint32_t addr, uint16_t port, int backlog) {
     sc_raw_socket raw_sock = unwrap(server_socket);
+
+    fprintf(stderr, "net_listen()\n");
 
     int reuse = 1;
     if (setsockopt(raw_sock, SOL_SOCKET, SO_REUSEADDR, (const void *) &reuse,
@@ -174,16 +238,41 @@ net_listen(sc_socket server_socket, uint32_t addr, uint16_t port, int backlog) {
     sin.sin_port = htons(port);
 
     if (bind(raw_sock, (SOCKADDR *) &sin, sizeof(sin)) == SOCKET_ERROR) {
+        fprintf(stderr, "Couldn't bind\n");
         net_perror("bind");
         return false;
     }
 
     if (listen(raw_sock, backlog) == SOCKET_ERROR) {
+        fprintf(stderr, "Couldn't listen\n");
         net_perror("listen");
         return false;
     }
 
     return true;
+}
+
+
+sc_socket
+net_accept_un(sc_socket server_socket) {
+    sc_raw_socket raw_server_socket = unwrap(server_socket);
+
+    SOCKADDR_UN csun;
+    socklen_t sunsize = sizeof(csun);
+
+#ifdef HAVE_SOCK_CLOEXEC
+    sc_raw_socket raw_sock =
+        accept4(raw_server_socket, (SOCKADDR *) &csun, &sunsize, SOCK_CLOEXEC);
+#else
+    sc_raw_socket raw_sock =
+        accept(raw_server_socket, (SOCKADDR *) &csun, &sunsize);
+    if (raw_sock != SC_RAW_SOCKET_NONE && !set_cloexec_flag(raw_sock)) {
+        sc_raw_socket_close(raw_sock);
+        return SC_SOCKET_NONE;
+    }
+#endif
+
+    return wrap(raw_sock);
 }
 
 sc_socket

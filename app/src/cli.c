@@ -79,6 +79,7 @@ enum {
     OPT_AUDIO_SOURCE,
     OPT_KILL_ADB_ON_CLOSE,
     OPT_TIME_LIMIT,
+	OPT_USE_SHIZUKU,
 };
 
 struct sc_option {
@@ -714,6 +715,11 @@ static const struct sc_option options[] = {
         .text = "Set the initial window height.\n"
                 "Default is 0 (automatic).",
     },
+	{
+		.longopt_id = OPT_USE_SHIZUKU,
+		.longopt = "use-shizuku",
+		.text = "Uses rish from shizuku instead of adb.",
+	},
 };
 
 static const struct sc_shortcut shortcuts[] = {
@@ -1977,7 +1983,14 @@ parse_args_with_getopt(struct scrcpy_cli_args *args, int argc, char *argv[],
                     return false;
                 }
                 break;
+			case OPT_USE_SHIZUKU:
+				opts->use_shizuku = true;
+				break;
             default:
+				// using shizuku will disables connecting over tcpip.
+				if (opts->use_shizuku) {
+					opts->tcpip = false;
+				}
                 // getopt prints the error message on stderr
                 return false;
         }

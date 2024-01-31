@@ -15,6 +15,20 @@ net_connect_intr(struct sc_intr *intr, sc_socket socket, uint32_t addr,
 }
 
 bool
+net_shizuku_listen_intr(struct sc_intr *intr, sc_socket server_socket,
+                        const char *abstractname, int backlog) {
+    if (!sc_intr_set_socket(intr, server_socket)) {
+        // Already interrupted
+        return false;
+    }
+
+    bool ret = net_listen_un(server_socket, abstractname, backlog);
+
+    sc_intr_set_socket(intr, SC_SOCKET_NONE);
+    return ret;
+}
+
+bool
 net_listen_intr(struct sc_intr *intr, sc_socket server_socket, uint32_t addr,
                 uint16_t port, int backlog) {
     if (!sc_intr_set_socket(intr, server_socket)) {
@@ -26,6 +40,19 @@ net_listen_intr(struct sc_intr *intr, sc_socket server_socket, uint32_t addr,
 
     sc_intr_set_socket(intr, SC_SOCKET_NONE);
     return ret;
+}
+
+sc_socket
+net_shizuku_accept_intr(struct sc_intr *intr, sc_socket server_socket) {
+    if (!sc_intr_set_socket(intr, server_socket)) {
+        // Already interrupted
+        return SC_SOCKET_NONE;
+    }
+
+    sc_socket socket = net_accept_un(server_socket);
+
+    sc_intr_set_socket(intr, SC_SOCKET_NONE);
+    return socket;
 }
 
 sc_socket

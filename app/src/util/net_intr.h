@@ -11,8 +11,15 @@ net_connect_intr(struct sc_intr *intr, sc_socket socket, uint32_t addr,
                  uint16_t port);
 
 bool
+net_shizuku_listen_intr(struct sc_intr *intr, sc_socket server_socket,
+                        const char *abstractname, int backlog);
+
+bool
 net_listen_intr(struct sc_intr *intr, sc_socket server_socket, uint32_t addr,
                 uint16_t port, int backlog);
+
+sc_socket
+net_shizuku_accept_intr(struct sc_intr *intr, sc_socket server_socket);
 
 sc_socket
 net_accept_intr(struct sc_intr *intr, sc_socket server_socket);
